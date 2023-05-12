@@ -1477,7 +1477,7 @@ func NewBatch(config *ConnConfig) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	client.batch = true //copy the client with changed batch setting
+	client.batch = true // copy the client with changed batch setting
 	client.start()
 	return client, nil
 }
@@ -1584,24 +1584,13 @@ func (c *Client) BackendVersion() (BackendVersion, error) {
 	// to a btcd backend if it does exist.
 	info, err := c.GetInfo()
 
-	switch err := err.(type) {
+	switch err.(type) {
 	// Parse the btcd version and cache it.
 	case nil:
 		log.Debugf("Detected btcd version: %v", info.Version)
 		version := Btcd
 		c.backendVersion = &version
 		return *c.backendVersion, nil
-
-	// Inspect the RPC error to ensure the method was not found, otherwise
-	// we actually ran into an error.
-	case *btcjson.RPCError:
-		if err.Code != btcjson.ErrRPCMethodNotFound.Code {
-			return 0, fmt.Errorf("unable to detect btcd version: "+
-				"%v", err)
-		}
-
-	default:
-		return 0, fmt.Errorf("unable to detect btcd version: %v", err)
 	}
 
 	// Since the GetInfo method was not found, we assume the client is
@@ -1609,7 +1598,13 @@ func (c *Client) BackendVersion() (BackendVersion, error) {
 	// GetNetworkInfo.
 	networkInfo, err := c.GetNetworkInfo()
 	if err != nil {
-		return 0, fmt.Errorf("unable to detect bitcoind version: %v", err)
+		log.Debugf("Could not detect bitcoind version: %v", err)
+	}
+
+	// assume the network is beyond v0.19
+	if networkInfo == nil {
+		log.Debug("Could not detect bitcoind version. Assuming post v0.19")
+		return BitcoindPost19, nil
 	}
 
 	// Parse the bitcoind version and cache it.
