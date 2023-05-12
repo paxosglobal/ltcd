@@ -1613,6 +1613,20 @@ func (c *Client) BackendVersion() (BackendVersion, error) {
 		return *c.backendVersion, nil
 	}
 
+	// We'll start by calling GetInfo. This method doesn't exist for
+	// bitcoind nodes as of v0.16.0, so we'll assume the client is connected
+	// to a btcd backend if it does exist.
+	info, err := c.GetInfo()
+
+	switch err.(type) {
+	// Parse the btcd version and cache it.
+	case nil:
+		log.Debugf("Detected btcd version: %v", info.Version)
+		version := Btcd
+		c.backendVersion = &version
+		return *c.backendVersion, nil
+	}
+
 	// Since the GetInfo method was not found, we assume the client is
 	// connected to a bitcoind backend, which exposes its version through
 	// GetNetworkInfo.
