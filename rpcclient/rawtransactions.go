@@ -349,8 +349,13 @@ func (c *Client) SendRawTransactionAsync(tx *wire.MsgTx, allowHighFees bool) Fut
 		txHex = hex.EncodeToString(buf.Bytes())
 	}
 
-	// hardcode this for now since all nodes we connect to are post 0.19
-	version := BitcoindPost19
+	// Due to differences in the sendrawtransaction API for different
+	// backends, we'll need to inspect our version and construct the
+	// appropriate request.
+	version, err := c.BackendVersion()
+	if err != nil {
+		return newFutureError(err)
+	}
 
 	var cmd *btcjson.SendRawTransactionCmd
 	switch version {

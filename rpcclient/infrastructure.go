@@ -1618,7 +1618,13 @@ func (c *Client) BackendVersion() (BackendVersion, error) {
 	// GetNetworkInfo.
 	networkInfo, err := c.GetNetworkInfo()
 	if err != nil {
-		return 0, fmt.Errorf("unable to detect bitcoind version: %v", err)
+		log.Debugf("Could not detect bitcoind version: %v", err)
+	}
+
+	// assume the network is beyond v0.19
+	if networkInfo == nil {
+		log.Debug("Could not detect bitcoind version. Assuming post v0.19")
+		return BitcoindPost19, nil
 	}
 
 	// Parse the bitcoind version and cache it.

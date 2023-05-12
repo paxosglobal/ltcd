@@ -473,8 +473,12 @@ func (r FutureGetBlockChainInfoResult) Receive() (*btcjson.GetBlockChainInfoResu
 		return nil, err
 	}
 
-	// hardcode this since everything is post 19 now
-	version := BitcoindPost19
+	// Inspect the version to determine how we'll need to parse the
+	// softforks from the response.
+	version, err := r.client.BackendVersion()
+	if err != nil {
+		return nil, err
+	}
 
 	err = unmarshalGetBlockChainInfoResultSoftForks(chainInfo, version, res)
 	if err != nil {
