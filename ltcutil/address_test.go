@@ -47,6 +47,24 @@ func TestAddresses(t *testing.T) {
 			net: &chaincfg.MainNetParams,
 		},
 		{
+			name:    "litecoin mainnet p2pkh with ltc1 prefix and no other '1' chars",
+			addr:    "LTC1f9gtb7bU6B4VjHXvPGDi8ACNZhkKPo",
+			encoded: "LTC1f9gtb7bU6B4VjHXvPGDi8ACNZhkKPo",
+			valid:   true,
+			result: ltcutil.TstAddressPubKeyHash(
+				[ripemd160.Size]byte{
+					0x57, 0x63, 0x02, 0x3d, 0x3f, 0x02, 0x50, 0x96, 0x44, 0xda,
+					0xcb, 0xfc, 0x45, 0xf2, 0xc9, 0x10, 0x21, 0x29, 0x74, 0x97},
+				chaincfg.MainNetParams.PubKeyHashAddrID),
+			f: func() (ltcutil.Address, error) {
+				pkHash := []byte{
+					0x57, 0x63, 0x02, 0x3d, 0x3f, 0x02, 0x50, 0x96, 0x44, 0xda,
+					0xcb, 0xfc, 0x45, 0xf2, 0xc9, 0x10, 0x21, 0x29, 0x74, 0x97}
+				return ltcutil.NewAddressPubKeyHash(pkHash, &chaincfg.MainNetParams)
+			},
+			net: &chaincfg.MainNetParams,
+		},
+		{
 			name:    "testnet p2pkh",
 			addr:    "mrX9vMRYLfVy1BnZbc5gZjuyaqH3ZW2ZHz",
 			encoded: "mrX9vMRYLfVy1BnZbc5gZjuyaqH3ZW2ZHz",
@@ -106,7 +124,7 @@ func TestAddresses(t *testing.T) {
 			net: &chaincfg.MainNetParams,
 		},
 		{
-			// Taken from bitcoind base58_keys_valid.
+			// Taken from litecoind base58_keys_valid.
 			name:    "testnet p2sh",
 			addr:    "Qec8RUd8PgAMi6dKDKdHQ7zu71kyQNeU5m",
 			encoded: "Qec8RUd8PgAMi6dKDKdHQ7zu71kyQNeU5m",
@@ -308,35 +326,33 @@ func TestAddresses(t *testing.T) {
 			},
 			net: &chaincfg.MainNetParams,
 		},
-
 		// P2TR address tests.
-		// TODO(Litecoin): taproot not yet enabled in Litecoin
-		// {
-		// 	name:    "segwit v1 mainnet p2tr",
-		// 	addr:    "bc1paardr2nczq0rx5rqpfwnvpzm497zvux64y0f7wjgcs7xuuuh2nnqwr2d5c",
-		// 	encoded: "bc1paardr2nczq0rx5rqpfwnvpzm497zvux64y0f7wjgcs7xuuuh2nnqwr2d5c",
-		// 	valid:   true,
-		// 	result: ltcutil.TstAddressTaproot(
-		// 		1, [32]byte{
-		// 			0xef, 0x46, 0xd1, 0xaa, 0x78, 0x10, 0x1e, 0x33,
-		// 			0x50, 0x60, 0x0a, 0x5d, 0x36, 0x04, 0x5b, 0xa9,
-		// 			0x7c, 0x26, 0x70, 0xda, 0xa9, 0x1e, 0x9f, 0x3a,
-		// 			0x48, 0xc4, 0x3c, 0x6e, 0x73, 0x97, 0x54, 0xe6,
-		// 		}, chaincfg.MainNetParams.Bech32HRPSegwit,
-		// 	),
-		// 	f: func() (ltcutil.Address, error) {
-		// 		scriptHash := []byte{
-		// 			0xef, 0x46, 0xd1, 0xaa, 0x78, 0x10, 0x1e, 0x33,
-		// 			0x50, 0x60, 0x0a, 0x5d, 0x36, 0x04, 0x5b, 0xa9,
-		// 			0x7c, 0x26, 0x70, 0xda, 0xa9, 0x1e, 0x9f, 0x3a,
-		// 			0x48, 0xc4, 0x3c, 0x6e, 0x73, 0x97, 0x54, 0xe6,
-		// 		}
-		// 		return ltcutil.NewAddressTaproot(
-		// 			scriptHash, &chaincfg.MainNetParams,
-		// 		)
-		// 	},
-		// 	net: &chaincfg.MainNetParams,
-		// },
+		{
+			name:    "segwit v1 mainnet p2tr",
+			addr:    "ltc1paardr2nczq0rx5rqpfwnvpzm497zvux64y0f7wjgcs7xuuuh2nnqd8yawa",
+			encoded: "ltc1paardr2nczq0rx5rqpfwnvpzm497zvux64y0f7wjgcs7xuuuh2nnqd8yawa",
+			valid:   true,
+			result: ltcutil.TstAddressTaproot(
+				1, [32]byte{
+					0xef, 0x46, 0xd1, 0xaa, 0x78, 0x10, 0x1e, 0x33,
+					0x50, 0x60, 0x0a, 0x5d, 0x36, 0x04, 0x5b, 0xa9,
+					0x7c, 0x26, 0x70, 0xda, 0xa9, 0x1e, 0x9f, 0x3a,
+					0x48, 0xc4, 0x3c, 0x6e, 0x73, 0x97, 0x54, 0xe6,
+				}, chaincfg.MainNetParams.Bech32HRPSegwit,
+			),
+			f: func() (ltcutil.Address, error) {
+				scriptHash := []byte{
+					0xef, 0x46, 0xd1, 0xaa, 0x78, 0x10, 0x1e, 0x33,
+					0x50, 0x60, 0x0a, 0x5d, 0x36, 0x04, 0x5b, 0xa9,
+					0x7c, 0x26, 0x70, 0xda, 0xa9, 0x1e, 0x9f, 0x3a,
+					0x48, 0xc4, 0x3c, 0x6e, 0x73, 0x97, 0x54, 0xe6,
+				}
+				return ltcutil.NewAddressTaproot(
+					scriptHash, &chaincfg.MainNetParams,
+				)
+			},
+			net: &chaincfg.MainNetParams,
+		},
 
 		// Invalid bech32m tests. Source:
 		// https://github.com/bitcoin/bips/blob/master/bip-0350.mediawiki

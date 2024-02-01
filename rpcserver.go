@@ -182,7 +182,7 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 
 // list of commands that we recognize, but for which ltcd has no support because
 // it lacks support for wallet functionality. For these commands the user
-// should ask a connected instance of btcwallet.
+// should ask a connected instance of ltcwallet.
 var rpcAskWallet = map[string]struct{}{
 	"addmultisigaddress":     {},
 	"backupwallet":           {},
@@ -359,7 +359,7 @@ func handleUnimplemented(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 
 // handleAskWallet is the handler for commands that are recognized as valid, but
 // are unable to answer correctly since it involves wallet state.
-// These commands will be implemented in btcwallet.
+// These commands will be implemented in ltcwallet.
 func handleAskWallet(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	return nil, ErrRPCNoWallet
 }
@@ -738,6 +738,13 @@ func createVoutList(mtx *wire.MsgTx, chainParams *chaincfg.Params, filterAddrMap
 		vout.ScriptPubKey.Type = scriptClass.String()
 		vout.ScriptPubKey.ReqSigs = int32(reqSigs)
 
+		// Address is defined when there's a single well-defined
+		// receiver address. To spend the output a signature for this,
+		// and only this, address is required.
+		if len(encodedAddrs) == 1 && reqSigs <= 1 {
+			vout.ScriptPubKey.Address = encodedAddrs[0]
+		}
+
 		voutList = append(voutList, vout)
 	}
 
@@ -769,7 +776,7 @@ func createTxRawResult(chainParams *chaincfg.Params, mtx *wire.MsgTx,
 	}
 
 	if blkHeader != nil {
-		// This is not a typo, they are identical in bitcoind as well.
+		// This is not a typo, they are identical in litecoind as well.
 		txReply.Time = blkHeader.Timestamp.Unix()
 		txReply.Blocktime = blkHeader.Timestamp.Unix()
 		txReply.BlockHash = blkHash
@@ -856,6 +863,13 @@ func handleDecodeScript(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 	}
 	if scriptClass != txscript.ScriptHashTy {
 		reply.P2sh = p2sh.EncodeAddress()
+	}
+
+	// Address is defined when there's a single well-defined
+	// receiver address. To spend the output a signature for this,
+	// and only this, address is required.
+	if len(addresses) == 1 && reqSigs <= 1 {
+		reply.Address = addresses[0]
 	}
 	return reply, nil
 }
@@ -1200,7 +1214,7 @@ func handleGetBlockChainInfo(s *rpcServer, cmd interface{}, closeChan <-chan str
 		BestBlockHash: chainSnapshot.Hash.String(),
 		Difficulty:    getDifficultyRatio(chainSnapshot.Bits, params),
 		MedianTime:    chainSnapshot.MedianTime.Unix(),
-		Pruned:        false,
+		Pruned:        cfg.Prune != 0,
 		SoftForks: &btcjson.SoftForks{
 			Bip9SoftForks: make(map[string]*btcjson.Bip9SoftForkDescription),
 		},
@@ -1258,6 +1272,9 @@ func handleGetBlockChainInfo(s *rpcServer, cmd interface{}, closeChan <-chan str
 
 		case chaincfg.DeploymentSegwit:
 			forkName = "segwit"
+
+		case chaincfg.DeploymentTaproot:
+			forkName = "taproot"
 
 		default:
 			return nil, &btcjson.RPCError{
@@ -1648,8 +1665,8 @@ func (state *gbtWorkState) updateBlockTemplate(s *rpcServer, useCoinbaseValue bo
 
 			// Update the merkle root.
 			block := ltcutil.NewBlock(template.Block)
-			merkles := blockchain.BuildMerkleTreeStore(block.Transactions(), false)
-			template.Block.Header.MerkleRoot = *merkles[len(merkles)-1]
+			merkleRoot := blockchain.CalcMerkleRoot(block.Transactions(), false)
+			template.Block.Header.MerkleRoot = merkleRoot
 		}
 
 		// Set locals for convenience.
@@ -1961,7 +1978,7 @@ func handleGetBlockTemplateRequest(s *rpcServer, request *btcjson.TemplateReques
 
 		return nil, &btcjson.RPCError{
 			Code:    btcjson.ErrRPCClientNotConnected,
-			Message: "Bitcoin is not connected",
+			Message: "Litecoin is not connected",
 		}
 	}
 
@@ -1970,7 +1987,7 @@ func handleGetBlockTemplateRequest(s *rpcServer, request *btcjson.TemplateReques
 	if currentHeight != 0 && !s.cfg.SyncMgr.IsCurrent() {
 		return nil, &btcjson.RPCError{
 			Code:    btcjson.ErrRPCClientInInitialDownload,
-			Message: "Bitcoin is downloading blocks...",
+			Message: "Litecoin is downloading blocks...",
 		}
 	}
 
@@ -2518,7 +2535,7 @@ func handleGetNodeAddresses(s *rpcServer, cmd interface{}, closeChan <-chan stru
 		address := &btcjson.GetNodeAddressesResult{
 			Time:     node.Timestamp.Unix(),
 			Services: uint64(node.Services),
-			Address:  node.IP.String(),
+			Address:  node.Addr.String(),
 			Port:     node.Port,
 		}
 		addresses = append(addresses, address)
@@ -2722,6 +2739,7 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 	var value int64
 	var pkScript []byte
 	var isCoinbase bool
+	var address string
 	includeMempool := true
 	if c.IncludeMempool != nil {
 		includeMempool = *c.IncludeMempool
@@ -2795,6 +2813,13 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 		addresses[i] = addr.EncodeAddress()
 	}
 
+	// Address is defined when there's a single well-defined
+	// receiver address. To spend the output a signature for this,
+	// and only this, address is required.
+	if len(addresses) == 1 && reqSigs <= 1 {
+		address = addresses[0]
+	}
+
 	txOutReply := &btcjson.GetTxOutResult{
 		BestBlock:     bestBlockHash,
 		Confirmations: int64(confirmations),
@@ -2804,10 +2829,12 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 			Hex:       hex.EncodeToString(pkScript),
 			ReqSigs:   int32(reqSigs),
 			Type:      scriptClass.String(),
+			Address:   address,
 			Addresses: addresses,
 		},
 		Coinbase: isCoinbase,
 	}
+
 	return txOutReply, nil
 }
 
@@ -3336,7 +3363,7 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 
 		// Add the block information to the result if there is any.
 		if blkHeader != nil {
-			// This is not a typo, they are identical in Bitcoin
+			// This is not a typo, they are identical in Litecoin
 			// Core as well.
 			result.Time = blkHeader.Timestamp.Unix()
 			result.Blocktime = blkHeader.Timestamp.Unix()
@@ -3391,7 +3418,7 @@ func handleSendRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan st
 		rpcsLog.Debugf("Rejected transaction %v: %v", tx.Hash(), err)
 
 		// We'll then map the rule error to the appropriate RPC error,
-		// matching bitcoind's behavior.
+		// matching litecoind's behavior.
 		code := btcjson.ErrRPCTxError
 		if txRuleErr, ok := ruleErr.Err.(mempool.TxRuleError); ok {
 			errDesc := txRuleErr.Description
@@ -3616,7 +3643,7 @@ func handleValidateAddress(s *rpcServer, cmd interface{}, closeChan <-chan struc
 		result.WitnessProgram = btcjson.String(hex.EncodeToString(addr.WitnessProgram()))
 
 	default:
-		// Handle the case when a new Address is supported by btcutil, but none
+		// Handle the case when a new Address is supported by ltcutil, but none
 		// of the cases were matched in the switch block. The current behaviour
 		// is to do nothing, and only populate the Address and IsValid fields.
 	}
@@ -3718,7 +3745,7 @@ func handleVerifyMessage(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 	pk, wasCompressed, err := ecdsa.RecoverCompact(sig,
 		expectedMessageHash)
 	if err != nil {
-		// Mirror Bitcoin Core behavior, which treats error in
+		// Mirror Litecoin Core behavior, which treats error in
 		// RecoverCompact as invalid signature.
 		return false, nil
 	}
@@ -3732,7 +3759,7 @@ func handleVerifyMessage(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 	}
 	address, err := ltcutil.NewAddressPubKey(serializedPK, params)
 	if err != nil {
-		// Again mirror Bitcoin Core behavior, which treats error in public key
+		// Again mirror Litecoin Core behavior, which treats error in public key
 		// reconstruction as invalid signature.
 		return false, nil
 	}
@@ -3960,7 +3987,7 @@ type parsedRPCCmd struct {
 	err     *btcjson.RPCError
 }
 
-// standardCmdResult checks that a parsed command is a standard Bitcoin JSON-RPC
+// standardCmdResult checks that a parsed command is a standard Litecoin JSON-RPC
 // command and runs the appropriate handler to reply to the command.  Any
 // commands which are not recognized or not implemented will return an error
 // suitable for use in replies.
@@ -4185,10 +4212,10 @@ func (s *rpcServer) jsonRPCRead(w http.ResponseWriter, r *http.Request, isAdmin 
 			// must not be responded to. JSON-RPC 2.0 permits the null value as a
 			// valid request id, therefore such requests are not notifications.
 			//
-			// Bitcoin Core serves requests with "id":null or even an absent "id",
+			// Litecoin Core serves requests with "id":null or even an absent "id",
 			// and responds to such requests with "id":null in the response.
 			//
-			// Btcd does not respond to any request without and "id" or "id":null,
+			// Ltcd does not respond to any request without and "id" or "id":null,
 			// regardless the indicated JSON-RPC protocol version unless RPC quirks
 			// are enabled. With RPC quirks enabled, such requests will be responded
 			// to if the reqeust does not indicate JSON-RPC version.
@@ -4332,7 +4359,7 @@ func (s *rpcServer) jsonRPCRead(w http.ResponseWriter, r *http.Request, isAdmin 
 		rpcsLog.Errorf("Failed to write marshalled reply: %v", err)
 	}
 
-	// Terminate with newline to maintain compatibility with Bitcoin Core.
+	// Terminate with newline to maintain compatibility with Litecoin Core.
 	if err := buf.WriteByte('\n'); err != nil {
 		rpcsLog.Errorf("Failed to append terminating newline to reply: %v", err)
 	}
@@ -4524,7 +4551,7 @@ type rpcserverConnManager interface {
 
 	// NodeAddresses returns an array consisting node addresses which can
 	// potentially be used to find new nodes in the network.
-	NodeAddresses() []*wire.NetAddress
+	NodeAddresses() []*wire.NetAddressV2
 }
 
 // rpcserverSyncManager represents a sync manager for use with the RPC server.

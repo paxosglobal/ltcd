@@ -9,7 +9,7 @@ import (
 )
 
 // PrivateKey wraps an ecdsa.PrivateKey as a convenience mainly for signing
-// things with the the private key without having to directly import the ecdsa
+// things with the private key without having to directly import the ecdsa
 // package.
 type PrivateKey = secp.PrivateKey
 
@@ -25,6 +25,12 @@ func PrivKeyFromBytes(pk []byte) (*PrivateKey, *PublicKey) {
 // instead of the normal ecdsa.PrivateKey.
 func NewPrivateKey() (*PrivateKey, error) {
 	return secp.GeneratePrivateKey()
+}
+
+// PrivKeyFromScalar instantiates a new private key from a scalar encoded as a
+// big integer.
+func PrivKeyFromScalar(key *ModNScalar) *PrivateKey {
+	return &PrivateKey{Key: *key}
 }
 
 // PrivKeyBytesLen defines the length in bytes of a serialized private key.

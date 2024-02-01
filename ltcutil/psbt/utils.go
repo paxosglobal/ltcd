@@ -17,7 +17,7 @@ import (
 )
 
 // WriteTxWitness is a utility function due to non-exported witness
-// serialization (writeTxWitness encodes the bitcoin protocol encoding for a
+// serialization (writeTxWitness encodes the litecoin protocol encoding for a
 // transaction input's witness into w).
 func WriteTxWitness(w io.Writer, wit [][]byte) error {
 	if err := wire.WriteVarInt(w, 0, uint64(len(wit))); err != nil {
@@ -35,9 +35,14 @@ func WriteTxWitness(w io.Writer, wit [][]byte) error {
 
 // writePKHWitness writes a witness for a p2wkh spending input
 func writePKHWitness(sig []byte, pub []byte) ([]byte, error) {
+	return writeWitness(sig, pub)
+}
+
+// writeWitness serializes a witness stack from the given items.
+func writeWitness(stackElements ...[]byte) ([]byte, error) {
 	var (
 		buf          bytes.Buffer
-		witnessItems = [][]byte{sig, pub}
+		witnessItems = append([][]byte{}, stackElements...)
 	)
 
 	if err := WriteTxWitness(&buf, witnessItems); err != nil {
@@ -240,7 +245,7 @@ func getKey(r io.Reader) (int, []byte, error) {
 
 	// Check that we don't attempt to decode a dangerously large key.
 	if count > MaxPsbtKeyLength {
-		return -1, nil, ErrInvalidKeydata
+		return -1, nil, ErrInvalidKeyData
 	}
 
 	// Next, we ready out the designated number of bytes, which may include
@@ -393,6 +398,30 @@ func VerifyInputOutputLen(packet *Packet, needInputs, needOutputs bool) error {
 	return nil
 }
 
+// InputsReadyToSign makes sure that all input data have the previous output
+// specified meaning that either nonwitness UTXO or the witness UTXO data is
+// specified in the psbt package. This check is necessary because of 2 reasons.
+// The sighash calculation is now different for witnessV0 and witnessV1 inputs
+// this means we need to check the previous output pkScript for the specific
+// type and the second reason is that the sighash calculation for taproot inputs
+// include the previous output pkscripts.
+func InputsReadyToSign(packet *Packet) error {
+	err := VerifyInputOutputLen(packet, true, true)
+	if err != nil {
+		return err
+	}
+
+	for i := range packet.UnsignedTx.TxIn {
+		input := packet.Inputs[i]
+		if input.NonWitnessUtxo == nil && input.WitnessUtxo == nil {
+			return fmt.Errorf("invalid PSBT, input with index %d "+
+				"missing utxo information", i)
+		}
+	}
+
+	return nil
+}
+
 // NewFromSignedTx is a utility function to create a packet from an
 // already-signed transaction. Returned are: an unsigned transaction
 // serialization, a list of scriptSigs, one per input, and a list of witnesses,
@@ -419,4 +448,24 @@ func NewFromSignedTx(tx *wire.MsgTx) (*Packet, [][]byte,
 		return nil, nil, nil, err
 	}
 	return unsignedPsbt, scriptSigs, witnesses, nil
+}
+
+// FindLeafScript attempts to locate the leaf script of a given target Tap Leaf
+// hash in the list of leaf scripts of the given input.
+func FindLeafScript(pInput *PInput,
+	targetLeafHash []byte) (*TaprootTapLeafScript, error) {
+
+	for _, leaf := range pInput.TaprootLeafScript {
+		leafHash := txscript.TapLeaf{
+			LeafVersion: leaf.LeafVersion,
+			Script:      leaf.Script,
+		}.TapHash()
+
+		if bytes.Equal(targetLeafHash, leafHash[:]) {
+			return leaf, nil
+		}
+	}
+
+	return nil, fmt.Errorf("leaf script for target leaf hash %x not "+
+		"found in input", targetLeafHash)
 }

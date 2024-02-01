@@ -39,13 +39,13 @@ var (
 	// can have for the simulation test network.  It is the value 2^255 - 1.
 	simNetPowLimit = new(big.Int).Sub(new(big.Int).Lsh(bigOne, 255), bigOne)
 
-	// sigNetPowLimit is the highest proof of work value a bitcoin block can
+	// sigNetPowLimit is the highest proof of work value a litecoin block can
 	// have for the signet test network. It is the value 0x0377ae << 216.
 	sigNetPowLimit = new(big.Int).Lsh(new(big.Int).SetInt64(0x0377ae), 216)
 
 	// DefaultSignetChallenge is the byte representation of the signet
 	// challenge for the default (public, Taproot enabled) signet network.
-	// This is the binary equivalent of the bitcoin script
+	// This is the binary equivalent of the litecoin script
 	//  1 03ad5e0edad18cb1f0fc0d28a3d4f1f3e445640337489abb10404f2d1e086be430
 	//  0359ef5021964fe22d6f8e05b2463c9540ce96883fe3b278760f048f5189f2e6c4 2
 	//  OP_CHECKMULTISIG
@@ -139,6 +139,11 @@ const (
 	// includes the deployment of BIPS 141, 142, 144, 145, 147 and 173.
 	DeploymentSegwit
 
+	// DeploymentTaproot defines the rule change deployment ID for the
+	// Taproot (+Schnorr) soft-fork package. The taproot package includes
+	// the deployment of BIPS 340, 341 and 342.
+	DeploymentTaproot
+
 	// NOTE: DefinedDeployments must always come last since it is used to
 	// determine how many defined deployments there currently are.
 
@@ -176,6 +181,11 @@ type Params struct {
 	// PowLimitBits defines the highest allowed proof of work value for a
 	// block in compact form.
 	PowLimitBits uint32
+
+	// PoWNoRetargeting defines whether the network has difficulty
+	// retargeting enabled or not. This should only be set to true for
+	// regtest like networks.
+	PoWNoRetargeting bool
 
 	// These fields define the block heights at which the specified softfork
 	// BIP became active.
@@ -359,6 +369,17 @@ var MainNetParams = Params{
 				time.Unix(1510704000, 0), // November 15, 2017 UTC.
 			),
 		},
+		DeploymentTaproot: {
+			BitNumber: 2,
+			DeploymentStarter: NewMedianTimeDeploymentStarter(
+				time.Unix(1619222400, 0), // April 24th, 2021 UTC.
+			),
+			DeploymentEnder: NewMedianTimeDeploymentEnder(
+				time.Unix(1628640000, 0), // August 11th, 2021 UTC.
+			),
+			CustomActivationThreshold: 1815, // 90%
+			MinActivationHeight:       709_632,
+		},
 	},
 
 	// Mempool parameters
@@ -386,7 +407,7 @@ var MainNetParams = Params{
 
 // RegressionNetParams defines the network parameters for the regression test
 // Litecoin network.  Not to be confused with the test Litecoin network (version
-// 3), this network is sometimes simply called "testnet".
+// 4), this network is sometimes simply called "testnet".
 var RegressionNetParams = Params{
 	Name:        "regtest",
 	Net:         wire.TestNet,
@@ -398,14 +419,15 @@ var RegressionNetParams = Params{
 	GenesisHash:              &regTestGenesisHash,
 	PowLimit:                 regressionPowLimit,
 	PowLimitBits:             0x207fffff,
+	PoWNoRetargeting:         true,
 	CoinbaseMaturity:         100,
 	BIP0034Height:            100000000, // Not active - Permit ver 1 blocks
 	BIP0065Height:            1351,      // Used by regression tests
 	BIP0066Height:            1251,      // Used by regression tests
 	SubsidyReductionInterval: 150,
-	TargetTimespan:           time.Hour * 24 * 14, // 14 days
-	TargetTimePerBlock:       time.Minute * 10,    // 10 minutes
-	RetargetAdjustmentFactor: 4,                   // 25% less, 400% more
+	TargetTimespan:           (time.Hour * 24 * 3) + (time.Hour * 12), // 3.5 days
+	TargetTimePerBlock:       (time.Minute * 2) + (time.Second * 30),  // 2.5 minutes
+	RetargetAdjustmentFactor: 4,                                       // 25% less, 400% more
 	ReduceMinDifficulty:      true,
 	MinDiffReductionTime:     time.Minute * 20, // TargetTimePerBlock * 2
 	GenerateSupported:        true,
@@ -457,6 +479,16 @@ var RegressionNetParams = Params{
 			DeploymentEnder: NewMedianTimeDeploymentEnder(
 				time.Time{}, // Never expires.
 			),
+		},
+		DeploymentTaproot: {
+			BitNumber: 2,
+			DeploymentStarter: NewMedianTimeDeploymentStarter(
+				time.Time{}, // Always available for vote
+			),
+			DeploymentEnder: NewMedianTimeDeploymentEnder(
+				time.Time{}, // Never expires.
+			),
+			CustomActivationThreshold: 108, // Only needs 75% hash rate.
 		},
 	},
 
@@ -566,6 +598,16 @@ var TestNet4Params = Params{
 				time.Unix(1493596800, 0), // May 1, 2017 UTC.
 			),
 		},
+		DeploymentTaproot: {
+			BitNumber: 2,
+			DeploymentStarter: NewMedianTimeDeploymentStarter(
+				time.Unix(1619222400, 0), // April 24th, 2021 UTC.
+			),
+			DeploymentEnder: NewMedianTimeDeploymentEnder(
+				time.Unix(1628640000, 0), // August 11th, 2021 UTC
+			),
+			CustomActivationThreshold: 1512, // 75%
+		},
 	},
 
 	// Mempool parameters
@@ -614,9 +656,9 @@ var SimNetParams = Params{
 	BIP0066Height:            0, // Always active on simnet
 	CoinbaseMaturity:         100,
 	SubsidyReductionInterval: 210000,
-	TargetTimespan:           time.Hour * 24 * 14, // 14 days
-	TargetTimePerBlock:       time.Minute * 10,    // 10 minutes
-	RetargetAdjustmentFactor: 4,                   // 25% less, 400% more
+	TargetTimespan:           (time.Hour * 24 * 3) + (time.Hour * 12), // 3.5 days
+	TargetTimePerBlock:       (time.Minute * 2) + (time.Second * 30),  // 2.5 minutes
+	RetargetAdjustmentFactor: 4,                                       // 25% less, 400% more
 	ReduceMinDifficulty:      true,
 	MinDiffReductionTime:     time.Minute * 20, // TargetTimePerBlock * 2
 	GenerateSupported:        true,
@@ -669,6 +711,16 @@ var SimNetParams = Params{
 				time.Time{}, // Never expires.
 			),
 		},
+		DeploymentTaproot: {
+			BitNumber: 2,
+			DeploymentStarter: NewMedianTimeDeploymentStarter(
+				time.Time{}, // Always available for vote
+			),
+			DeploymentEnder: NewMedianTimeDeploymentEnder(
+				time.Time{}, // Never expires.
+			),
+			CustomActivationThreshold: 75, // Only needs 75% hash rate.
+		},
 	},
 
 	// Mempool parameters
@@ -695,7 +747,7 @@ var SimNetParams = Params{
 }
 
 // SigNetParams defines the network parameters for the default public signet
-// Bitcoin network. Not to be confused with the regression test network, this
+// Litecoin network. Not to be confused with the regression test network, this
 // network is sometimes simply called "signet" or "taproot signet".
 var SigNetParams = CustomSignetParams(
 	DefaultSignetChallenge, DefaultSignetDNSSeeds,
@@ -726,15 +778,15 @@ func CustomSignetParams(challenge []byte, dnsSeeds []DNSSeed) Params {
 		GenesisBlock:             &sigNetGenesisBlock,
 		GenesisHash:              &sigNetGenesisHash,
 		PowLimit:                 sigNetPowLimit,
-		PowLimitBits:             0x1e0377ae,
+		PowLimitBits:             0x207fffff,
 		BIP0034Height:            1,
 		BIP0065Height:            1,
 		BIP0066Height:            1,
 		CoinbaseMaturity:         100,
 		SubsidyReductionInterval: 210000,
-		TargetTimespan:           time.Hour * 24 * 14, // 14 days
-		TargetTimePerBlock:       time.Minute * 10,    // 10 minutes
-		RetargetAdjustmentFactor: 4,                   // 25% less, 400% more
+		TargetTimespan:           (time.Hour * 24 * 3) + (time.Hour * 12), // 3.5 days
+		TargetTimePerBlock:       (time.Minute * 2) + (time.Second * 30),  // 2.5 minutes
+		RetargetAdjustmentFactor: 4,                                       // 25% less, 400% more
 		ReduceMinDifficulty:      false,
 		MinDiffReductionTime:     time.Minute * 20, // TargetTimePerBlock * 2
 		GenerateSupported:        false,
@@ -787,6 +839,15 @@ func CustomSignetParams(challenge []byte, dnsSeeds []DNSSeed) Params {
 					time.Time{}, // Never expires
 				),
 			},
+			DeploymentTaproot: {
+				BitNumber: 29,
+				DeploymentStarter: NewMedianTimeDeploymentStarter(
+					time.Time{}, // Always available for vote
+				),
+				DeploymentEnder: NewMedianTimeDeploymentEnder(
+					time.Time{}, // Never expires
+				),
+			},
 		},
 
 		// Mempool parameters
@@ -794,7 +855,7 @@ func CustomSignetParams(challenge []byte, dnsSeeds []DNSSeed) Params {
 
 		// Human-readable part for Bech32 encoded segwit addresses, as defined in
 		// BIP 173.
-		Bech32HRPSegwit: "tb", // always tb for test net
+		Bech32HRPSegwit: "tltc", // always tltc for test net
 
 		// Address encoding magics
 		PubKeyHashAddrID:        0x6f, // starts with m or n
@@ -918,8 +979,9 @@ func IsBech32SegwitPrefix(prefix string) bool {
 // ErrInvalidHDKeyID error will be returned.
 //
 // Reference:
-//   SLIP-0132 : Registered HD version bytes for BIP-0032
-//   https://github.com/satoshilabs/slips/blob/master/slip-0132.md
+//
+//	SLIP-0132 : Registered HD version bytes for BIP-0032
+//	https://github.com/satoshilabs/slips/blob/master/slip-0132.md
 func RegisterHDKeyID(hdPublicKeyID []byte, hdPrivateKeyID []byte) error {
 	if len(hdPublicKeyID) != 4 || len(hdPrivateKeyID) != 4 {
 		return ErrInvalidHDKeyID

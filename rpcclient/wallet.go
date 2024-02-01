@@ -1016,10 +1016,10 @@ func (c *Client) CreateWalletAsync(name string, opts ...CreateWalletOpt) FutureC
 //
 // Optional parameters can be specified using functional-options pattern. The
 // following functions are available:
-//   * WithCreateWalletDisablePrivateKeys
-//   * WithCreateWalletBlank
-//   * WithCreateWalletPassphrase
-//   * WithCreateWalletAvoidReuse
+//   - WithCreateWalletDisablePrivateKeys
+//   - WithCreateWalletBlank
+//   - WithCreateWalletPassphrase
+//   - WithCreateWalletAvoidReuse
 func (c *Client) CreateWallet(name string, opts ...CreateWalletOpt) (*btcjson.CreateWalletResult, error) {
 	return c.CreateWalletAsync(name, opts...).Receive()
 }
@@ -1029,7 +1029,7 @@ func (c *Client) CreateWallet(name string, opts ...CreateWalletOpt) (*btcjson.Cr
 type FutureGetAddressInfoResult chan *Response
 
 // Receive waits for the Response promised by the future and returns the information
-// about the given bitcoin address.
+// about the given litecoin address.
 func (r FutureGetAddressInfoResult) Receive() (*btcjson.GetAddressInfoResult, error) {
 	res, err := ReceiveFuture(r)
 	if err != nil {
@@ -1054,7 +1054,7 @@ func (c *Client) GetAddressInfoAsync(address string) FutureGetAddressInfoResult 
 	return c.SendCmd(cmd)
 }
 
-// GetAddressInfo returns information about the given bitcoin address.
+// GetAddressInfo returns information about the given litecoin address.
 func (c *Client) GetAddressInfo(address string) (*btcjson.GetAddressInfoResult, error) {
 	return c.GetAddressInfoAsync(address).Receive()
 }
@@ -1090,7 +1090,7 @@ func (r FutureGetNewAddressResult) Receive() (ltcutil.Address, error) {
 //
 // See GetNewAddress for the blocking version and more details.
 func (c *Client) GetNewAddressAsync(account string) FutureGetNewAddressResult {
-	cmd := btcjson.NewGetNewAddressCmd(&account)
+	cmd := btcjson.NewGetNewAddressCmd(&account, nil)
 	result := FutureGetNewAddressResult{
 		network:         c.chainParams,
 		responseChannel: c.SendCmd(cmd),
@@ -1102,6 +1102,26 @@ func (c *Client) GetNewAddressAsync(account string) FutureGetNewAddressResult {
 // chain params.
 func (c *Client) GetNewAddress(account string) (ltcutil.Address, error) {
 	return c.GetNewAddressAsync(account).Receive()
+}
+
+// GetNewAddressTypeAsync returns an instance of a type that can be used to get
+// the result of the RPC at some future time by invoking the Receive function on
+// the returned instance.
+//
+// See GetNewAddressType for the blocking version and more details.
+func (c *Client) GetNewAddressTypeAsync(account, addrType string) FutureGetNewAddressResult {
+	cmd := btcjson.NewGetNewAddressCmd(&account, &addrType)
+	result := FutureGetNewAddressResult{
+		network:         c.chainParams,
+		responseChannel: c.SendCmd(cmd),
+	}
+	return result
+}
+
+// GetNewAddressType returns a new address, and decodes based on the client's
+// chain params.
+func (c *Client) GetNewAddressType(account, addrType string) (ltcutil.Address, error) {
+	return c.GetNewAddressTypeAsync(account, addrType).Receive()
 }
 
 // FutureGetRawChangeAddressResult is a future promise to deliver the result of
@@ -1136,7 +1156,7 @@ func (r FutureGetRawChangeAddressResult) Receive() (ltcutil.Address, error) {
 //
 // See GetRawChangeAddress for the blocking version and more details.
 func (c *Client) GetRawChangeAddressAsync(account string) FutureGetRawChangeAddressResult {
-	cmd := btcjson.NewGetRawChangeAddressCmd(&account)
+	cmd := btcjson.NewGetRawChangeAddressCmd(&account, nil)
 	result := FutureGetRawChangeAddressResult{
 		network:         c.chainParams,
 		responseChannel: c.SendCmd(cmd),
@@ -1149,6 +1169,27 @@ func (c *Client) GetRawChangeAddressAsync(account string) FutureGetRawChangeAddr
 // transactions and NOT for normal use.
 func (c *Client) GetRawChangeAddress(account string) (ltcutil.Address, error) {
 	return c.GetRawChangeAddressAsync(account).Receive()
+}
+
+// GetRawChangeAddressTypeAsync returns an instance of a type that can be used
+// to get the result of the RPC at some future time by invoking the Receive
+// function on the returned instance.
+//
+// See GetRawChangeAddressType for the blocking version and more details.
+func (c *Client) GetRawChangeAddressTypeAsync(account, addrType string) FutureGetRawChangeAddressResult {
+	cmd := btcjson.NewGetRawChangeAddressCmd(&account, &addrType)
+	result := FutureGetRawChangeAddressResult{
+		network:         c.chainParams,
+		responseChannel: c.SendCmd(cmd),
+	}
+	return result
+}
+
+// GetRawChangeAddressType returns a new address for receiving change that will
+// be associated with the provided account.  Note that this is only for raw
+// transactions and NOT for normal use.
+func (c *Client) GetRawChangeAddressType(account, addrType string) (ltcutil.Address, error) {
+	return c.GetRawChangeAddressTypeAsync(account, addrType).Receive()
 }
 
 // FutureAddWitnessAddressResult is a future promise to deliver the result of
@@ -1204,7 +1245,7 @@ type FutureGetAccountAddressResult struct {
 }
 
 // Receive waits for the Response promised by the future and returns the current
-// Bitcoin address for receiving payments to the specified account.
+// Litecoin address for receiving payments to the specified account.
 func (r FutureGetAccountAddressResult) Receive() (ltcutil.Address, error) {
 	res, err := ReceiveFuture(r.responseChannel)
 	if err != nil {
@@ -1235,7 +1276,7 @@ func (c *Client) GetAccountAddressAsync(account string) FutureGetAccountAddressR
 	return result
 }
 
-// GetAccountAddress returns the current Bitcoin address for receiving payments
+// GetAccountAddress returns the current Litecoin address for receiving payments
 // to the specified account.
 func (c *Client) GetAccountAddress(account string) (ltcutil.Address, error) {
 	return c.GetAccountAddressAsync(account).Receive()
@@ -1481,7 +1522,7 @@ func (c *Client) RenameAccount(oldAccount, newAccount string) error {
 type FutureValidateAddressResult chan *Response
 
 // Receive waits for the Response promised by the future and returns information
-// about the given bitcoin address.
+// about the given litecoin address.
 func (r FutureValidateAddressResult) Receive() (*btcjson.ValidateAddressWalletResult, error) {
 	res, err := ReceiveFuture(r)
 	if err != nil {
@@ -1509,7 +1550,7 @@ func (c *Client) ValidateAddressAsync(address ltcutil.Address) FutureValidateAdd
 	return c.SendCmd(cmd)
 }
 
-// ValidateAddress returns information about the given bitcoin address.
+// ValidateAddress returns information about the given litecoin address.
 func (c *Client) ValidateAddress(address ltcutil.Address) (*btcjson.ValidateAddressWalletResult, error) {
 	return c.ValidateAddressAsync(address).Receive()
 }
@@ -2620,7 +2661,7 @@ func (c *Client) WalletCreateFundedPsbt(
 type FutureWalletProcessPsbtResult chan *Response
 
 // Receive waits for the Response promised by the future and returns an updated
-// PSBT with signed inputs from the wallet and a boolen indicating if the the
+// PSBT with signed inputs from the wallet and a boolen indicating if the
 // transaction has a complete set of signatures.
 func (r FutureWalletProcessPsbtResult) Receive() (*btcjson.WalletProcessPsbtResult, error) {
 	res, err := ReceiveFuture(r)
@@ -2792,7 +2833,7 @@ func (c *Client) UnloadWalletAsync(walletName *string) FutureUnloadWalletResult 
 }
 
 // UnloadWallet unloads the referenced wallet. If the RPC server URL already
-// contains the name of the wallet, like http://127.0.0.1:8332/wallet/<walletname>,
+// contains the name of the wallet, like http://127.0.0.1:9332/wallet/<walletname>,
 // the parameter must be nil, or it'll return an error.
 func (c *Client) UnloadWallet(walletName *string) error {
 	return c.UnloadWalletAsync(walletName).Receive()
@@ -2828,6 +2869,6 @@ func (c *Client) LoadWallet(walletName string) (*btcjson.LoadWalletResult, error
 }
 
 // TODO(davec): Implement
-// encryptwallet (Won't be supported by btcwallet since it's always encrypted)
-// listaddressgroupings (NYI in btcwallet)
-// listreceivedbyaccount (NYI in btcwallet)
+// encryptwallet (Won't be supported by ltcwallet since it's always encrypted)
+// listaddressgroupings (NYI in ltcwallet)
+// listreceivedbyaccount (NYI in ltcwallet)
