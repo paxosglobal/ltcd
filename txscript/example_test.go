@@ -17,7 +17,7 @@ import (
 	"github.com/ltcsuite/ltcd/wire"
 )
 
-// This example demonstrates creating a script which pays to a bitcoin address.
+// This example demonstrates creating a script which pays to a litecoin address.
 // It also prints the created script hex and uses the DisasmString function to
 // display the disassembled script.
 func ExamplePayToAddrScript() {
@@ -166,7 +166,7 @@ func ExampleSignTxOutput() {
 		txscript.ScriptStrictMultiSig |
 		txscript.ScriptDiscourageUpgradableNops
 	vm, err := txscript.NewEngine(originTx.TxOut[0].PkScript, redeemTx, 0,
-		flags, nil, nil, -1)
+		flags, nil, nil, -1, nil)
 	if err != nil {
 		fmt.Println(err)
 		return

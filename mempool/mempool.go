@@ -989,7 +989,7 @@ func (mp *TxPool) maybeAcceptTransaction(tx *ltcutil.Tx, isNew, rateLimit, rejec
 	// Don't allow non-standard transactions if the network parameters
 	// forbid their acceptance.
 	if !mp.cfg.Policy.AcceptNonStd {
-		err = checkTransactionStandard(tx, nextBlockHeight,
+		err = CheckTransactionStandard(tx, nextBlockHeight,
 			medianTimePast, mp.cfg.Policy.MinRelayTxFee,
 			mp.cfg.Policy.MaxTxVersion)
 		if err != nil {
@@ -1175,7 +1175,7 @@ func (mp *TxPool) maybeAcceptTransaction(tx *ltcutil.Tx, isNew, rateLimit, rejec
 	if rateLimit && txFee < minFee {
 		nowUnix := time.Now().Unix()
 		// Decay passed data with an exponentially decaying ~10 minute
-		// window - matches bitcoind handling.
+		// window - matches litecoind handling.
 		mp.pennyTotal *= math.Pow(1.0-1.0/600.0,
 			float64(nowUnix-mp.lastPennyUnix))
 		mp.lastPennyUnix = nowUnix

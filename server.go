@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/decred/dcrd/lru"
 	"github.com/ltcsuite/ltcd/addrmgr"
 	"github.com/ltcsuite/ltcd/blockchain"
 	"github.com/ltcsuite/ltcd/blockchain/indexers"
@@ -43,8 +44,8 @@ import (
 const (
 	// defaultServices describes the default services that are supported by
 	// the server.
-	defaultServices = wire.SFNodeNetwork | wire.SFNodeBloom |
-		wire.SFNodeWitness | wire.SFNodeCF
+	defaultServices = wire.SFNodeNetwork | wire.SFNodeNetworkLimited |
+		wire.SFNodeBloom | wire.SFNodeWitness | wire.SFNodeCF
 
 	// defaultRequiredServices describes the default services that are
 	// required to be supported by outbound peers.
@@ -61,11 +62,11 @@ const (
 
 var (
 	// userAgentName is the user agent name and is used to help identify
-	// ourselves to other bitcoin peers.
+	// ourselves to other litecoin peers.
 	userAgentName = "ltcd"
 
 	// userAgentVersion is the user agent version and is used to help
-	// identify ourselves to other bitcoin peers.
+	// identify ourselves to other litecoin peers.
 	userAgentVersion = fmt.Sprintf("%d.%d.%d", appMajor, appMinor, appPatch)
 )
 
@@ -116,7 +117,7 @@ func (a simpleAddr) Network() string {
 // Ensure simpleAddr implements the net.Addr interface.
 var _ net.Addr = simpleAddr{}
 
-// broadcastMsg provides the ability to house a bitcoin message to be broadcast
+// broadcastMsg provides the ability to house a litecoin message to be broadcast
 // to all connected peers except specified excluded peers.
 type broadcastMsg struct {
 	message      wire.Message
@@ -193,8 +194,8 @@ type cfHeaderKV struct {
 	filterHeader chainhash.Hash
 }
 
-// server provides a bitcoin server for handling communications to and from
-// bitcoin peers.
+// server provides a litecoin server for handling communications to and from
+// litecoin peers.
 type server struct {
 	// The following variables must only be used atomically.
 	// Putting the uint64s first makes them 64-bit aligned for 32-bit systems.
@@ -274,7 +275,7 @@ type serverPeer struct {
 	isWhitelisted  bool
 	filter         *bloom.Filter
 	addressesMtx   sync.RWMutex
-	knownAddresses map[string]struct{}
+	knownAddresses lru.Cache
 	banScore       connmgr.DynamicBanScore
 	quit           chan struct{}
 	// The following chans are used to sync blockmanager and server.
@@ -289,7 +290,7 @@ func newServerPeer(s *server, isPersistent bool) *serverPeer {
 		server:         s,
 		persistent:     isPersistent,
 		filter:         bloom.LoadFilter(nil),
-		knownAddresses: make(map[string]struct{}),
+		knownAddresses: lru.NewCache(5000),
 		quit:           make(chan struct{}),
 		txProcessed:    make(chan struct{}, 1),
 		blockProcessed: make(chan struct{}, 1),
@@ -305,18 +306,18 @@ func (sp *serverPeer) newestBlock() (*chainhash.Hash, int32, error) {
 
 // addKnownAddresses adds the given addresses to the set of known addresses to
 // the peer to prevent sending duplicate addresses.
-func (sp *serverPeer) addKnownAddresses(addresses []*wire.NetAddress) {
+func (sp *serverPeer) addKnownAddresses(addresses []*wire.NetAddressV2) {
 	sp.addressesMtx.Lock()
 	for _, na := range addresses {
-		sp.knownAddresses[addrmgr.NetAddressKey(na)] = struct{}{}
+		sp.knownAddresses.Add(addrmgr.NetAddressKey(na))
 	}
 	sp.addressesMtx.Unlock()
 }
 
 // addressKnown true if the given address is already known to the peer.
-func (sp *serverPeer) addressKnown(na *wire.NetAddress) bool {
+func (sp *serverPeer) addressKnown(na *wire.NetAddressV2) bool {
 	sp.addressesMtx.RLock()
-	_, exists := sp.knownAddresses[addrmgr.NetAddressKey(na)]
+	exists := sp.knownAddresses.Contains(addrmgr.NetAddressKey(na))
 	sp.addressesMtx.RUnlock()
 	return exists
 }
@@ -340,23 +341,73 @@ func (sp *serverPeer) relayTxDisabled() bool {
 	return isDisabled
 }
 
-// pushAddrMsg sends an addr message to the connected peer using the provided
-// addresses.
-func (sp *serverPeer) pushAddrMsg(addresses []*wire.NetAddress) {
-	// Filter addresses already known to the peer.
-	addrs := make([]*wire.NetAddress, 0, len(addresses))
-	for _, addr := range addresses {
-		if !sp.addressKnown(addr) {
+// pushAddrMsg sends a legacy addr message to the connected peer using the
+// provided addresses.
+func (sp *serverPeer) pushAddrMsg(addresses []*wire.NetAddressV2) {
+	if sp.WantsAddrV2() {
+		// If the peer supports addrv2, we'll be pushing an addrv2
+		// message instead. The logic is otherwise identical to the
+		// addr case below.
+		addrs := make([]*wire.NetAddressV2, 0, len(addresses))
+		for _, addr := range addresses {
+			// Filter addresses already known to the peer.
+			if sp.addressKnown(addr) {
+				continue
+			}
+
 			addrs = append(addrs, addr)
 		}
+
+		known, err := sp.PushAddrV2Msg(addrs)
+		if err != nil {
+			peerLog.Errorf("Can't push addrv2 message to %s: %v",
+				sp.Peer, err)
+			sp.Disconnect()
+			return
+		}
+
+		// Add the final set of addresses sent to the set the peer
+		// knows of.
+		sp.addKnownAddresses(known)
+		return
 	}
+
+	addrs := make([]*wire.NetAddress, 0, len(addresses))
+	for _, addr := range addresses {
+		// Filter addresses already known to the peer.
+		if sp.addressKnown(addr) {
+			continue
+		}
+
+		// Must skip the V3 addresses for legacy ADDR messages.
+		if addr.IsTorV3() {
+			continue
+		}
+
+		// Convert the NetAddressV2 to a legacy address.
+		addrs = append(addrs, addr.ToLegacy())
+	}
+
 	known, err := sp.PushAddrMsg(addrs)
 	if err != nil {
-		peerLog.Errorf("Can't push address message to %s: %v", sp.Peer, err)
+		peerLog.Errorf(
+			"Can't push address message to %s: %v", sp.Peer, err,
+		)
 		sp.Disconnect()
 		return
 	}
-	sp.addKnownAddresses(known)
+
+	// Convert all of the known addresses to NetAddressV2 to add them to
+	// the set of known addresses.
+	knownAddrs := make([]*wire.NetAddressV2, 0, len(known))
+	for _, knownAddr := range known {
+		currentKna := wire.NetAddressV2FromBytes(
+			knownAddr.Timestamp, knownAddr.Services,
+			knownAddr.IP, knownAddr.Port,
+		)
+		knownAddrs = append(knownAddrs, currentKna)
+	}
+	sp.addKnownAddresses(knownAddrs)
 }
 
 // addBanScore increases the persistent and decaying ban score fields by the
@@ -406,7 +457,7 @@ func hasServices(advertised, desired wire.ServiceFlag) bool {
 	return advertised&desired == desired
 }
 
-// OnVersion is invoked when a peer receives a version bitcoin message
+// OnVersion is invoked when a peer receives a version litecoin message
 // and is used to negotiate the protocol version details as well as kick start
 // the communications.
 func (sp *serverPeer) OnVersion(_ *peer.Peer, msg *wire.MsgVersion) *wire.MsgReject {
@@ -476,13 +527,13 @@ func (sp *serverPeer) OnVersion(_ *peer.Peer, msg *wire.MsgVersion) *wire.MsgRej
 	return nil
 }
 
-// OnVerAck is invoked when a peer receives a verack bitcoin message and is used
+// OnVerAck is invoked when a peer receives a verack litecoin message and is used
 // to kick start communication with them.
 func (sp *serverPeer) OnVerAck(_ *peer.Peer, _ *wire.MsgVerAck) {
 	sp.server.AddPeer(sp)
 }
 
-// OnMemPool is invoked when a peer receives a mempool bitcoin message.
+// OnMemPool is invoked when a peer receives a mempool litecoin message.
 // It creates and sends an inventory message with the contents of the memory
 // pool up to the maximum inventory allowed per message.  When the peer has a
 // bloom filter loaded, the contents are filtered accordingly.
@@ -532,8 +583,8 @@ func (sp *serverPeer) OnMemPool(_ *peer.Peer, msg *wire.MsgMemPool) {
 	}
 }
 
-// OnTx is invoked when a peer receives a tx bitcoin message.  It blocks
-// until the bitcoin transaction has been fully processed.  Unlock the block
+// OnTx is invoked when a peer receives a tx litecoin message.  It blocks
+// until the litecoin transaction has been fully processed.  Unlock the block
 // handler this does not serialize all transactions through a single thread
 // transactions don't rely on the previous one in a linear fashion like blocks.
 func (sp *serverPeer) OnTx(_ *peer.Peer, msg *wire.MsgTx) {
@@ -559,8 +610,8 @@ func (sp *serverPeer) OnTx(_ *peer.Peer, msg *wire.MsgTx) {
 	<-sp.txProcessed
 }
 
-// OnBlock is invoked when a peer receives a block bitcoin message.  It
-// blocks until the bitcoin block has been fully processed.
+// OnBlock is invoked when a peer receives a block litecoin message.  It
+// blocks until the litecoin block has been fully processed.
 func (sp *serverPeer) OnBlock(_ *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 	// Convert the raw MsgBlock to a ltcutil.Block which provides some
 	// convenience methods and things such as hash caching.
@@ -572,7 +623,7 @@ func (sp *serverPeer) OnBlock(_ *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 
 	// Queue the block up to be handled by the block
 	// manager and intentionally block further receives
-	// until the bitcoin block is fully processed and known
+	// until the litecoin block is fully processed and known
 	// good or bad.  This helps prevent a malicious peer
 	// from queuing up a bunch of bad blocks before
 	// disconnecting (or being disconnected) and wasting
@@ -580,12 +631,12 @@ func (sp *serverPeer) OnBlock(_ *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 	// by at least the block acceptance test tool as the
 	// reference implementation processes blocks in the same
 	// thread and therefore blocks further messages until
-	// the bitcoin block has been fully processed.
+	// the litecoin block has been fully processed.
 	sp.server.syncManager.QueueBlock(block, sp.Peer, sp.blockProcessed)
 	<-sp.blockProcessed
 }
 
-// OnInv is invoked when a peer receives an inv bitcoin message and is
+// OnInv is invoked when a peer receives an inv litecoin message and is
 // used to examine the inventory being advertised by the remote peer and react
 // accordingly.  We pass the message down to blockmanager which will call
 // QueueMessage with any appropriate responses.
@@ -622,13 +673,13 @@ func (sp *serverPeer) OnInv(_ *peer.Peer, msg *wire.MsgInv) {
 	}
 }
 
-// OnHeaders is invoked when a peer receives a headers bitcoin
+// OnHeaders is invoked when a peer receives a headers litecoin
 // message.  The message is passed down to the sync manager.
 func (sp *serverPeer) OnHeaders(_ *peer.Peer, msg *wire.MsgHeaders) {
 	sp.server.syncManager.QueueHeaders(msg, sp.Peer)
 }
 
-// handleGetData is invoked when a peer receives a getdata bitcoin message and
+// handleGetData is invoked when a peer receives a getdata litecoin message and
 // is used to deliver block and transaction information.
 func (sp *serverPeer) OnGetData(_ *peer.Peer, msg *wire.MsgGetData) {
 	numAdded := 0
@@ -710,7 +761,7 @@ func (sp *serverPeer) OnGetData(_ *peer.Peer, msg *wire.MsgGetData) {
 	}
 }
 
-// OnGetBlocks is invoked when a peer receives a getblocks bitcoin
+// OnGetBlocks is invoked when a peer receives a getblocks litecoin
 // message.
 func (sp *serverPeer) OnGetBlocks(_ *peer.Peer, msg *wire.MsgGetBlocks) {
 	// Find the most recent known block in the best chain based on the block
@@ -749,7 +800,7 @@ func (sp *serverPeer) OnGetBlocks(_ *peer.Peer, msg *wire.MsgGetBlocks) {
 	}
 }
 
-// OnGetHeaders is invoked when a peer receives a getheaders bitcoin
+// OnGetHeaders is invoked when a peer receives a getheaders litecoin
 // message.
 func (sp *serverPeer) OnGetHeaders(_ *peer.Peer, msg *wire.MsgGetHeaders) {
 	// Ignore getheaders requests if not in sync.
@@ -778,7 +829,7 @@ func (sp *serverPeer) OnGetHeaders(_ *peer.Peer, msg *wire.MsgGetHeaders) {
 	sp.QueueMessage(&wire.MsgHeaders{Headers: blockHeaders}, nil)
 }
 
-// OnGetCFilters is invoked when a peer receives a getcfilters bitcoin message.
+// OnGetCFilters is invoked when a peer receives a getcfilters litecoin message.
 func (sp *serverPeer) OnGetCFilters(_ *peer.Peer, msg *wire.MsgGetCFilters) {
 	// Ignore getcfilters requests if not in sync.
 	if !sp.server.syncManager.IsCurrent() {
@@ -834,7 +885,7 @@ func (sp *serverPeer) OnGetCFilters(_ *peer.Peer, msg *wire.MsgGetCFilters) {
 	}
 }
 
-// OnGetCFHeaders is invoked when a peer receives a getcfheader bitcoin message.
+// OnGetCFHeaders is invoked when a peer receives a getcfheader litecoin message.
 func (sp *serverPeer) OnGetCFHeaders(_ *peer.Peer, msg *wire.MsgGetCFHeaders) {
 	// Ignore getcfilterheader requests if not in sync.
 	if !sp.server.syncManager.IsCurrent() {
@@ -951,7 +1002,7 @@ func (sp *serverPeer) OnGetCFHeaders(_ *peer.Peer, msg *wire.MsgGetCFHeaders) {
 	sp.QueueMessage(headersMsg, nil)
 }
 
-// OnGetCFCheckpt is invoked when a peer receives a getcfcheckpt bitcoin message.
+// OnGetCFCheckpt is invoked when a peer receives a getcfcheckpt litecoin message.
 func (sp *serverPeer) OnGetCFCheckpt(_ *peer.Peer, msg *wire.MsgGetCFCheckpt) {
 	// Ignore getcfcheckpt requests if not in sync.
 	if !sp.server.syncManager.IsCurrent() {
@@ -1137,7 +1188,7 @@ func (sp *serverPeer) enforceNodeBloomFlag(cmd string) bool {
 	return true
 }
 
-// OnFeeFilter is invoked when a peer receives a feefilter bitcoin message and
+// OnFeeFilter is invoked when a peer receives a feefilter litecoin message and
 // is used by remote peers to request that no transactions which have a fee rate
 // lower than provided value are inventoried to them.  The peer will be
 // disconnected if an invalid fee filter value is provided.
@@ -1153,7 +1204,7 @@ func (sp *serverPeer) OnFeeFilter(_ *peer.Peer, msg *wire.MsgFeeFilter) {
 	atomic.StoreInt64(&sp.feeFilter, msg.MinFee)
 }
 
-// OnFilterAdd is invoked when a peer receives a filteradd bitcoin
+// OnFilterAdd is invoked when a peer receives a filteradd litecoin
 // message and is used by remote peers to add data to an already loaded bloom
 // filter.  The peer will be disconnected if a filter is not loaded when this
 // message is received or the server is not configured to allow bloom filters.
@@ -1174,7 +1225,7 @@ func (sp *serverPeer) OnFilterAdd(_ *peer.Peer, msg *wire.MsgFilterAdd) {
 	sp.filter.Add(msg.Data)
 }
 
-// OnFilterClear is invoked when a peer receives a filterclear bitcoin
+// OnFilterClear is invoked when a peer receives a filterclear litecoin
 // message and is used by remote peers to clear an already loaded bloom filter.
 // The peer will be disconnected if a filter is not loaded when this message is
 // received  or the server is not configured to allow bloom filters.
@@ -1195,7 +1246,7 @@ func (sp *serverPeer) OnFilterClear(_ *peer.Peer, msg *wire.MsgFilterClear) {
 	sp.filter.Unload()
 }
 
-// OnFilterLoad is invoked when a peer receives a filterload bitcoin
+// OnFilterLoad is invoked when a peer receives a filterload litecoin
 // message and it used to load a bloom filter that should be used for
 // delivering merkle blocks and associated transactions that match the filter.
 // The peer will be disconnected if the server is not configured to allow bloom
@@ -1212,7 +1263,7 @@ func (sp *serverPeer) OnFilterLoad(_ *peer.Peer, msg *wire.MsgFilterLoad) {
 	sp.filter.Reload(msg)
 }
 
-// OnGetAddr is invoked when a peer receives a getaddr bitcoin message
+// OnGetAddr is invoked when a peer receives a getaddr litecoin message
 // and is used to provide the peer with known addresses from the address
 // manager.
 func (sp *serverPeer) OnGetAddr(_ *peer.Peer, msg *wire.MsgGetAddr) {
@@ -1248,7 +1299,7 @@ func (sp *serverPeer) OnGetAddr(_ *peer.Peer, msg *wire.MsgGetAddr) {
 	sp.pushAddrMsg(addrCache)
 }
 
-// OnAddr is invoked when a peer receives an addr bitcoin message and is
+// OnAddr is invoked when a peer receives an addr litecoin message and is
 // used to notify the server about advertised addresses.
 func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.MsgAddr) {
 	// Ignore addresses when running on the simulation test network.  This
@@ -1272,6 +1323,7 @@ func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.MsgAddr) {
 		return
 	}
 
+	addrs := make([]*wire.NetAddressV2, 0, len(msg.AddrList))
 	for _, na := range msg.AddrList {
 		// Don't add more address if we're disconnecting.
 		if !sp.Connected() {
@@ -1286,15 +1338,60 @@ func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.MsgAddr) {
 			na.Timestamp = now.Add(-1 * time.Hour * 24 * 5)
 		}
 
-		// Add address to known addresses for this peer.
-		sp.addKnownAddresses([]*wire.NetAddress{na})
+		// Add address to known addresses for this peer. This is
+		// converted to NetAddressV2 since that's what the address
+		// manager uses.
+		currentNa := wire.NetAddressV2FromBytes(
+			na.Timestamp, na.Services, na.IP, na.Port,
+		)
+		addrs = append(addrs, currentNa)
+		sp.addKnownAddresses([]*wire.NetAddressV2{currentNa})
 	}
 
 	// Add addresses to server address manager.  The address manager handles
 	// the details of things such as preventing duplicate addresses, max
 	// addresses, and last seen updates.
-	// XXX bitcoind gives a 2 hour time penalty here, do we want to do the
+	// XXX litecoind gives a 2 hour time penalty here, do we want to do the
 	// same?
+	sp.server.addrManager.AddAddresses(addrs, sp.NA())
+}
+
+// OnAddrV2 is invoked when a peer receives an addrv2 litecoin message and is
+// used to notify the server about advertised addresses.
+func (sp *serverPeer) OnAddrV2(_ *peer.Peer, msg *wire.MsgAddrV2) {
+	// Ignore if simnet for the same reasons as the regular addr message.
+	if cfg.SimNet {
+		return
+	}
+
+	// An empty AddrV2 message is invalid.
+	if len(msg.AddrList) == 0 {
+		peerLog.Errorf("Command [%s] from %s does not contain any "+
+			"addresses", msg.Command(), sp.Peer)
+		sp.Disconnect()
+		return
+	}
+
+	for _, na := range msg.AddrList {
+		// Don't add more to the set of known addresses if we're
+		// disconnecting.
+		if !sp.Connected() {
+			return
+		}
+
+		// Set the timestamp to 5 days ago if the timestamp received is
+		// more than 10 minutes in the future so this address is one of
+		// the first to be removed.
+		now := time.Now()
+		if na.Timestamp.After(now.Add(time.Minute * 10)) {
+			na.Timestamp = now.Add(-1 * time.Hour * 24 * 5)
+		}
+
+		// Add to the set of known addresses.
+		sp.addKnownAddresses([]*wire.NetAddressV2{na})
+	}
+
+	// Add the addresses to the addrmanager.
 	sp.server.addrManager.AddAddresses(msg.AddrList, sp.NA())
 }
 
@@ -1343,7 +1440,7 @@ func (sp *serverPeer) OnNotFound(p *peer.Peer, msg *wire.MsgNotFound) {
 	}
 	if numTxns > 0 {
 		txStr := pickNoun(uint64(numTxns), "transaction", "transactions")
-		reason := fmt.Sprintf("%d %v not found", numBlocks, txStr)
+		reason := fmt.Sprintf("%d %v not found", numTxns, txStr)
 		if sp.addBanScore(0, 10*numTxns, reason) {
 			return
 		}
@@ -1700,7 +1797,7 @@ func (s *server) handleAddPeerMsg(state *peerState, sp *serverPeer) bool {
 			lna := s.addrManager.GetBestLocalAddress(sp.NA())
 			if addrmgr.IsRoutable(lna) {
 				// Filter addresses the peer already knows about.
-				addresses := []*wire.NetAddress{lna}
+				addresses := []*wire.NetAddressV2{lna}
 				sp.pushAddrMsg(addresses)
 			}
 		}
@@ -2044,6 +2141,7 @@ func newPeerConfig(sp *serverPeer) *peer.Config {
 			OnFilterLoad:   sp.OnFilterLoad,
 			OnGetAddr:      sp.OnGetAddr,
 			OnAddr:         sp.OnAddr,
+			OnAddrV2:       sp.OnAddrV2,
 			OnRead:         sp.OnRead,
 			OnWrite:        sp.OnWrite,
 			OnNotFound:     sp.OnNotFound,
@@ -2152,8 +2250,8 @@ func (s *server) peerHandler() {
 	if !cfg.DisableDNSSeed {
 		// Add peers discovered through DNS to the address manager.
 		connmgr.SeedFromDNS(activeNetParams.Params, defaultRequiredServices,
-			ltcdLookup, func(addrs []*wire.NetAddress) {
-				// Bitcoind uses a lookup of the dns seeder here. This
+			ltcdLookup, func(addrs []*wire.NetAddressV2) {
+				// Litecoind uses a lookup of the dns seeder here. This
 				// is rather strange since the values looked up by the
 				// DNS seed lookups will vary quite a lot.
 				// to replicate this behaviour we put all addresses as
@@ -2543,8 +2641,8 @@ out:
 					srvrLog.Warnf("UPnP can't get external address: %v", err)
 					continue out
 				}
-				na := wire.NewNetAddressIPPort(externalip, uint16(listenPort),
-					s.services)
+				na := wire.NetAddressV2FromBytes(time.Now(), s.services,
+					externalip, uint16(listenPort))
 				err = s.addrManager.AddLocalAddress(na, addrmgr.UpnpPrio)
 				if err != nil {
 					// XXX DeletePortMapping?
@@ -2619,7 +2717,7 @@ func setupRPCListeners() ([]net.Listener, error) {
 }
 
 // newServer returns a new ltcd server configured to listen on addr for the
-// bitcoin network type specified by chainParams.  Use start to begin accepting
+// litecoin network type specified by chainParams.  Use start to begin accepting
 // connections from peers.
 func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 	db database.DB, chainParams *chaincfg.Params,
@@ -2631,6 +2729,9 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 	}
 	if cfg.NoCFilters {
 		services &^= wire.SFNodeCF
+	}
+	if cfg.Prune != 0 {
+		services &^= wire.SFNodeNetwork
 	}
 
 	amgr := addrmgr.New(cfg.DataDir, ltcdLookup)
@@ -2733,6 +2834,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		SigCache:     s.sigCache,
 		IndexManager: indexManager,
 		HashCache:    s.hashCache,
+		Prune:        cfg.Prune * 1024 * 1024,
 	})
 	if err != nil {
 		return nil, err
@@ -3117,7 +3219,9 @@ func addLocalAddress(addrMgr *addrmgr.AddrManager, addr string, services wire.Se
 				continue
 			}
 
-			netAddr := wire.NewNetAddressIPPort(ifaceIP, uint16(port), services)
+			netAddr := wire.NetAddressV2FromBytes(
+				time.Now(), services, ifaceIP, uint16(port),
+			)
 			addrMgr.AddLocalAddress(netAddr, addrmgr.BoundPrio)
 		}
 	} else {

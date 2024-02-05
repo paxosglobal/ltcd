@@ -1,7 +1,4 @@
-// Copyright (c) 2013-2017 The btcsuite developers
-// Copyright (c) 2015-2021 The Decred developers
-// Use of this source code is governed by an ISC
-// license that can be found in the LICENSE file.
+// Copyright (c) 2013-2022 The btcsuite developers
 
 package schnorr
 
@@ -54,8 +51,9 @@ func NewSignature(r *btcec.FieldVal, s *btcec.ModNScalar) *Signature {
 // Serialize returns the Schnorr signature in the more strict format.
 //
 // The signatures are encoded as
-//   sig[0:32]  x coordinate of the point R, encoded as a big-endian uint256
-//   sig[32:64] s, encoded also as big-endian uint256
+//
+//	sig[0:32]  x coordinate of the point R, encoded as a big-endian uint256
+//	sig[32:64] s, encoded also as big-endian uint256
 func (sig Signature) Serialize() []byte {
 	// Total length of returned signature is the length of r and s.
 	var b [SignatureSize]byte
@@ -93,10 +91,7 @@ func ParseSignature(sig []byte) (*Signature, error) {
 		return nil, signatureError(ecdsa_schnorr.ErrSigRTooBig, str)
 	}
 	var s btcec.ModNScalar
-	if overflow := s.SetByteSlice(sig[32:64]); overflow {
-		str := "invalid signature: s >= group order"
-		return nil, signatureError(ecdsa_schnorr.ErrSigSTooBig, str)
-	}
+	s.SetByteSlice(sig[32:64])
 
 	// Return the signature.
 	return NewSignature(&r, &s), nil
@@ -179,10 +174,7 @@ func schnorrVerify(sig *Signature, hash []byte, pubKeyBytes []byte) error {
 	)
 
 	var e btcec.ModNScalar
-	if overflow := e.SetBytes((*[32]byte)(commitment)); overflow != 0 {
-		str := "hash of (r || P || m) too big"
-		return signatureError(ecdsa_schnorr.ErrSchnorrHashValue, str)
-	}
+	e.SetBytes((*[32]byte)(commitment))
 
 	// Negate e here so we can use AddNonConst below to subtract the s*G
 	// point from e*P.
@@ -285,7 +277,7 @@ func schnorrSign(privKey, nonce *btcec.ModNScalar, pubKey *btcec.PublicKey, hash
 	//
 	// Note that the set of functional options passed in may modify the
 	// above algorithm. Namely if CustomNonce is used, then steps 6-8 are
-	// replaced with a process that generates the nonce using rfc6679. If
+	// replaced with a process that generates the nonce using rfc6979. If
 	// FastSign is passed, then we skip set 14.
 
 	// NOTE: Steps 1-9 are performed by the caller.
@@ -438,13 +430,14 @@ func Sign(privKey *btcec.PrivateKey, hash []byte,
 	//
 	// Note that the set of functional options passed in may modify the
 	// above algorithm. Namely if CustomNonce is used, then steps 6-8 are
-	// replaced with a process that generates the nonce using rfc6679. If
+	// replaced with a process that generates the nonce using rfc6979. If
 	// FastSign is passed, then we skip set 14.
 
 	// Step 1.
 	//
 	// d' = int(d)
-	privKeyScalar := &privKey.Key
+	var privKeyScalar btcec.ModNScalar
+	privKeyScalar.Set(&privKey.Key)
 
 	// Step 2.
 	//
@@ -515,7 +508,7 @@ func Sign(privKey *btcec.PrivateKey, hash []byte,
 			return nil, signatureError(ecdsa_schnorr.ErrSchnorrHashValue, str)
 		}
 
-		sig, err := schnorrSign(privKeyScalar, &kPrime, pub, hash, opts)
+		sig, err := schnorrSign(&privKeyScalar, &kPrime, pub, hash, opts)
 		kPrime.Zero()
 		if err != nil {
 			return nil, err
@@ -538,7 +531,7 @@ func Sign(privKey *btcec.PrivateKey, hash []byte,
 		)
 
 		// Steps 10-15.
-		sig, err := schnorrSign(privKeyScalar, k, pub, hash, opts)
+		sig, err := schnorrSign(&privKeyScalar, k, pub, hash, opts)
 		k.Zero()
 		if err != nil {
 			// Try again with a new nonce.

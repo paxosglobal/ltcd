@@ -29,7 +29,7 @@ func (s PartialSigSorter) Less(i, j int) bool {
 }
 
 // validatePubkey checks if pubKey is *any* valid pubKey serialization in a
-// Bitcoin context (compressed/uncomp. OK).
+// Litecoin context (compressed/uncomp. OK).
 func validatePubkey(pubKey []byte) bool {
 	_, err := btcec.ParsePubKey(pubKey)
 	return err == nil
@@ -43,11 +43,8 @@ func validateSignature(sig []byte) bool {
 	return err == nil
 }
 
-// checkValid checks that both the pbukey and sig are valid. See the methods
+// checkValid checks that both the pubkey and sig are valid. See the methods
 // (PartialSig, validatePubkey, validateSignature) for more details.
-//
-// TODO(waxwing): update for Schnorr will be needed here if/when that
-// activates.
 func (ps *PartialSig) checkValid() bool {
 	return validatePubkey(ps.PubKey) && validateSignature(ps.Signature)
 }

@@ -4,7 +4,7 @@
 
 /*
 This test file is part of the ltcutil package rather than than the
-btcutil_test package so it can bridge access to the internals to properly test
+ltcutil_test package so it can bridge access to the internals to properly test
 cases which are either not possible or can't reliably be tested via the public
 interface. The functions are only exported while the tests are being run.
 */
@@ -108,14 +108,14 @@ func TstAddressPubKey(serializedPubKey []byte, pubKeyFormat PubKeyFormat,
 }
 
 // TstAddressSAddr returns the expected script address bytes for
-// P2PKH and P2SH bitcoin addresses.
+// P2PKH and P2SH litecoin addresses.
 func TstAddressSAddr(addr string) []byte {
 	decoded := base58.Decode(addr)
 	return decoded[1 : 1+ripemd160.Size]
 }
 
 // TstAddressSegwitSAddr returns the expected witness program bytes for
-// bech32 encoded P2WPKH and P2WSH bitcoin addresses.
+// bech32 encoded P2WPKH and P2WSH litecoin addresses.
 func TstAddressSegwitSAddr(addr string) []byte {
 	_, data, err := bech32.Decode(addr)
 	if err != nil {
@@ -131,7 +131,7 @@ func TstAddressSegwitSAddr(addr string) []byte {
 }
 
 // TstAddressTaprootSAddr returns the expected witness program bytes for a
-// bech32m encoded P2TR bitcoin address.
+// bech32m encoded P2TR litecoin address.
 func TstAddressTaprootSAddr(addr string) []byte {
 	_, data, err := bech32.Decode(addr)
 	if err != nil {

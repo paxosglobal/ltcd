@@ -17,8 +17,8 @@ const semanticAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqr
 // versioning 2.0.0 spec (http://semver.org/).
 const (
 	appMajor uint = 0
-	appMinor uint = 22
-	appPatch uint = 1
+	appMinor uint = 23
+	appPatch uint = 4
 
 	// appPreRelease MUST only contain characters from semanticAlphabet
 	// per the semantic versioning spec.
@@ -66,7 +66,7 @@ func normalizeVerString(str string) string {
 	for _, r := range str {
 		if strings.ContainsRune(semanticAlphabet, r) {
 			// Ignoring the error here since it can only fail if
-			// the the system is out of memory and there are much
+			// the system is out of memory and there are much
 			// bigger issues at that point.
 			_, _ = result.WriteRune(r)
 		}
