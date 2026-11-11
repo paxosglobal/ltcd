@@ -315,3 +315,4 @@ information.
     find -name '_.go' -exec sed -i 's/ltcd/btcd/g' {} +
     find -name '_.go' -exec sed -i 's/ltcsuite/btcsuite/g' {} +
     find -name '\*.go' -exec sed -i 's/ltcutil/btcutil/g' {} +
+<!-- hoplites review smoke test -->
